@@ -1,0 +1,10 @@
+{
+  "target": "gandian",
+  "display_name": "干点",
+  "engine": "informer",
+  "uses_last_prediction": true,
+  "delay_hours": 3,
+  "window_hours": 1,
+  "max_points": 30,
+  "default_cycle": "none"
+}

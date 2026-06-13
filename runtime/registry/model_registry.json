@@ -1,0 +1,46 @@
+{
+  "bingxi": {
+    "display_name": "丙烯",
+    "engine": "informer",
+    "default_cycle": "10d",
+    "active_model_dir": "runtime/models/bingxi/active",
+    "candidate_model_dir": null,
+    "feature_adapter": "bingxi_adapter",
+    "last_update_time": null,
+    "last_selection_time": null,
+    "status": "active"
+  },
+  "C5": {
+    "display_name": "C5",
+    "engine": "xgboost",
+    "default_cycle": "none",
+    "active_model_dir": "runtime/models/C5/active",
+    "candidate_model_dir": null,
+    "feature_adapter": "C5_adapter",
+    "last_update_time": null,
+    "last_selection_time": null,
+    "status": "active"
+  },
+  "gandian": {
+    "display_name": "干点",
+    "engine": "informer",
+    "default_cycle": "none",
+    "active_model_dir": "runtime/models/gandian/active",
+    "candidate_model_dir": null,
+    "feature_adapter": "gandian_adapter",
+    "last_update_time": null,
+    "last_selection_time": null,
+    "status": "active"
+  },
+  "qiya": {
+    "display_name": "蒸气压",
+    "engine": "xgboost",
+    "default_cycle": "10d",
+    "active_model_dir": "runtime/models/qiya/active",
+    "candidate_model_dir": null,
+    "feature_adapter": "qiya_adapter",
+    "last_update_time": null,
+    "last_selection_time": null,
+    "status": "active"
+  }
+}

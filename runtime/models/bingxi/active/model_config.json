@@ -1,0 +1,10 @@
+{
+  "target": "bingxi",
+  "display_name": "丙烯",
+  "engine": "informer",
+  "uses_last_prediction": true,
+  "delay_hours": 1,
+  "window_hours": 2,
+  "max_points": 60,
+  "default_cycle": "10d"
+}
