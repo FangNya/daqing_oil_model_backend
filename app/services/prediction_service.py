@@ -87,20 +87,15 @@ def _with_synthetic_timestamps(records, adapter, end_time):
     return records
 
 
-def _prediction_time(operation_records, lab_records, adapter, payload, stale_count: int):
-    if lab_records:
-        times = pd.to_datetime([row.get("sample_time") for row in lab_records], errors="coerce")
-        if times.isna().any():
-            raise BackendError("INVALID_LAB_RECORD", "lab_records contain invalid sample_time")
-        return times.max()
+def _prediction_time(operation_records, _lab_records, _adapter, payload, stale_count: int):
     times = pd.to_datetime([row.get("TimeStamp") for row in operation_records], errors="coerce")
     if len(times) == 0 or times.isna().any():
         raise BackendError("MISSING_TIMESTAMP", "operation_records require valid TimeStamp")
     if stale_count:
         end_time = _parse_end_time(payload.get("endTime"))
         if end_time is not None:
-            return end_time + pd.Timedelta(hours=adapter.delay_hours)
-    return times.max() + pd.Timedelta(hours=adapter.delay_hours)
+            return end_time
+    return times.max()
 
 
 def _split_stale_records(records, threshold_days: int):
