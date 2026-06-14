@@ -136,19 +136,35 @@ def _combine_operation_history(op_history: pd.DataFrame, operation_records):
     return combined.drop_duplicates("TimeStamp", keep="last").sort_values("TimeStamp").reset_index(drop=True)
 
 
-def _shift_request_records_to_window(operation_records, adapter, pred_time):
-    request_df = pd.DataFrame(operation_records)
-    if request_df.empty:
-        return request_df
-    request_df["TimeStamp"] = pd.to_datetime(request_df["TimeStamp"], errors="coerce")
-    request_df = request_df.dropna(subset=["TimeStamp"]).sort_values("TimeStamp").reset_index(drop=True)
-    end_time = pd.Timestamp(pred_time) - pd.Timedelta(hours=adapter.delay_hours)
-    if len(request_df) == 1:
-        request_df["TimeStamp"] = [end_time]
-    else:
-        start_time = end_time - pd.Timedelta(hours=adapter.window_hours)
-        request_df["TimeStamp"] = pd.date_range(start=start_time, end=end_time, periods=len(request_df))
-    return request_df
+def _operation_window_start(pred_time, adapter):
+    return pd.Timestamp(pred_time) - pd.Timedelta(hours=adapter.delay_hours + adapter.window_hours)
+
+
+def _has_prior_lab(lab_history: pd.DataFrame, window_start) -> bool:
+    if lab_history.empty:
+        return False
+    times = pd.to_datetime(lab_history["sample_time"], errors="coerce")
+    return bool((times < pd.Timestamp(window_start)).any())
+
+
+def _select_lab_fallback(target: str, lab_history: pd.DataFrame, pred_time):
+    if lab_history.empty:
+        raise BackendError(
+            "NO_LAB_FALLBACK_AVAILABLE",
+            f"{target}: no lab history available for cold-start fallback",
+        )
+    labs = lab_history.copy()
+    labs["sample_time"] = pd.to_datetime(labs["sample_time"], errors="coerce")
+    labs["value"] = pd.to_numeric(labs["value"], errors="coerce")
+    labs = labs.dropna(subset=["sample_time", "value"]).sort_values("sample_time")
+    candidates = labs[labs["sample_time"] <= pd.Timestamp(pred_time)]
+    if candidates.empty:
+        raise BackendError(
+            "NO_LAB_FALLBACK_AVAILABLE",
+            f"{target}: no lab history before prediction_time for cold-start fallback",
+        )
+    row = candidates.iloc[-1]
+    return pd.Timestamp(row["sample_time"]), float(row["value"])
 
 
 def _write_cold_start_log(target: str, record: dict):
@@ -189,6 +205,82 @@ def clear_model_cache():
     _MODEL_CACHE.clear()
 
 
+def _append_operation_records_or_error(target: str, records):
+    try:
+        append_operation_records(target, records)
+    except ValueError as exc:
+        code = str(exc).split(":", 1)[0]
+        raise BackendError(code, str(exc)) from exc
+    except Exception as exc:
+        raise BackendError("DATA_SAVE_FAILED", str(exc), status_code=500) from exc
+
+
+def _fallback_to_lab_response(
+    target: str,
+    cycle: str,
+    lab_history: pd.DataFrame,
+    pred_time,
+    reason: str,
+    fresh_records,
+    stale_records,
+    fresh_start,
+    fresh_end,
+    stale_start,
+    stale_end,
+    threshold_days: int,
+):
+    prediction_time = _format_timestamp(pred_time)
+    try:
+        lab_time, lab_value = _select_lab_fallback(target, lab_history, pred_time)
+    except BackendError as exc:
+        _write_cold_start_log(
+            target,
+            {
+                "status": "failed",
+                "reason": reason,
+                "failure_code": exc.code,
+                "fresh_count": len(fresh_records),
+                "stale_count": len(stale_records),
+                "fresh_time_start": fresh_start,
+                "fresh_time_end": fresh_end,
+                "stale_time_start": stale_start,
+                "stale_time_end": stale_end,
+                "threshold_days": threshold_days,
+                "prediction_time": prediction_time,
+            },
+        )
+        raise
+
+    _append_operation_records_or_error(target, fresh_records)
+    _write_cold_start_log(
+        target,
+        {
+            "status": "ok",
+            "reason": reason,
+            "fresh_count": len(fresh_records),
+            "stale_count": len(stale_records),
+            "fresh_time_start": fresh_start,
+            "fresh_time_end": fresh_end,
+            "stale_time_start": stale_start,
+            "stale_time_end": stale_end,
+            "threshold_days": threshold_days,
+            "prediction_time": prediction_time,
+            "lab_time": _format_timestamp(lab_time),
+            "lab_value": lab_value,
+        },
+    )
+    return {
+        "target": target,
+        "prediction_time": prediction_time,
+        "prediction": lab_value,
+        "time": prediction_time,
+        "result": str(lab_value),
+        "model_version": "active",
+        "active_cycle": cycle,
+        "status": "ok",
+    }
+
+
 def predict_target(target: str, payload: dict):
     payload = payload or {}
     lab_records = payload.get("lab_records") or []
@@ -211,7 +303,6 @@ def predict_target(target: str, payload: dict):
     stale_start, stale_end = _time_bounds(stale_records)
 
     try:
-        append_operation_records(target, fresh_records)
         append_lab_records(target, lab_records)
     except ValueError as exc:
         code = str(exc).split(":", 1)[0]
@@ -219,57 +310,82 @@ def predict_target(target: str, payload: dict):
     except Exception as exc:
         raise BackendError("DATA_SAVE_FAILED", str(exc), status_code=500) from exc
 
-    op_history = load_operation_history(target)
     lab_history = load_lab_history(target)
     pred_time = _prediction_time(operation_records, lab_records, adapter, payload, len(stale_records))
-    prediction_history = _combine_operation_history(op_history, operation_records)
 
-    model = _load_model(config)
-    fallback_used = False
+    if stale_records:
+        return _fallback_to_lab_response(
+            target,
+            cycle,
+            lab_history,
+            pred_time,
+            "stale_request",
+            fresh_records,
+            stale_records,
+            fresh_start,
+            fresh_end,
+            stale_start,
+            stale_end,
+            threshold_days,
+        )
+
+    window_start = _operation_window_start(pred_time, adapter)
+    if not _has_prior_lab(lab_history, window_start):
+        return _fallback_to_lab_response(
+            target,
+            cycle,
+            lab_history,
+            pred_time,
+            "missing_prior_lab",
+            fresh_records,
+            stale_records,
+            fresh_start,
+            fresh_end,
+            stale_start,
+            stale_end,
+            threshold_days,
+        )
+
+    op_history = load_operation_history(target)
+    prediction_history = _combine_operation_history(op_history, operation_records)
     try:
         X = adapter.build_predict_input(prediction_history, lab_history, pred_time)
     except BackendError as exc:
-        if exc.code != "INSUFFICIENT_WINDOW_POINTS":
-            if stale_records:
-                _write_cold_start_log(
-                    target,
-                    {
-                        "status": "failed",
-                        "reason": exc.code,
-                        "fresh_count": len(fresh_records),
-                        "stale_count": len(stale_records),
-                        "fresh_time_start": fresh_start,
-                        "fresh_time_end": fresh_end,
-                        "stale_time_start": stale_start,
-                        "stale_time_end": stale_end,
-                        "threshold_days": threshold_days,
-                        "fallback_used": fallback_used,
-                    },
-                )
-            raise
-        fallback_used = True
-        shifted_history = _shift_request_records_to_window(operation_records, adapter, pred_time)
-        try:
-            X = adapter.build_predict_input(shifted_history, lab_history, pred_time)
-        except BackendError as fallback_exc:
-            if stale_records:
-                _write_cold_start_log(
-                    target,
-                    {
-                        "status": "failed",
-                        "reason": fallback_exc.code,
-                        "fresh_count": len(fresh_records),
-                        "stale_count": len(stale_records),
-                        "fresh_time_start": fresh_start,
-                        "fresh_time_end": fresh_end,
-                        "stale_time_start": stale_start,
-                        "stale_time_end": stale_end,
-                        "threshold_days": threshold_days,
-                        "fallback_used": fallback_used,
-                    },
-                )
-            raise
+        if exc.code == "INSUFFICIENT_WINDOW_POINTS":
+            return _fallback_to_lab_response(
+                target,
+                cycle,
+                lab_history,
+                pred_time,
+                "insufficient_window",
+                fresh_records,
+                stale_records,
+                fresh_start,
+                fresh_end,
+                stale_start,
+                stale_end,
+                threshold_days,
+            )
+        _write_cold_start_log(
+            target,
+            {
+                "status": "failed",
+                "reason": exc.code,
+                "fresh_count": len(fresh_records),
+                "stale_count": len(stale_records),
+                "fresh_time_start": fresh_start,
+                "fresh_time_end": fresh_end,
+                "stale_time_start": stale_start,
+                "stale_time_end": stale_end,
+                "threshold_days": threshold_days,
+                "prediction_time": _format_timestamp(pred_time),
+            },
+        )
+        raise
+
+    model = _load_model(config)
     prediction = model.predict(X)
+    _append_operation_records_or_error(target, fresh_records)
 
     save_prediction_record(
         target,
@@ -282,23 +398,6 @@ def predict_target(target: str, payload: dict):
     )
 
     prediction_time = _format_timestamp(pred_time)
-    if stale_records:
-        _write_cold_start_log(
-            target,
-            {
-                "status": "ok",
-                "fresh_count": len(fresh_records),
-                "stale_count": len(stale_records),
-                "fresh_time_start": fresh_start,
-                "fresh_time_end": fresh_end,
-                "stale_time_start": stale_start,
-                "stale_time_end": stale_end,
-                "threshold_days": threshold_days,
-                "fallback_used": fallback_used,
-                "prediction_time": prediction_time,
-            },
-        )
-
     return {
         "target": target,
         "prediction_time": prediction_time,

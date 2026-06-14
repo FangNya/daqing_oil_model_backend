@@ -92,6 +92,24 @@ def _copy_candidate_to_active(candidate_dir: Path, target: str):
             shutil.copy2(item, dst)
 
 
+def _remove_model_dir(target: str, path: str | Path, reason: str):
+    model_root = backend_path(f"runtime/models/{target}").resolve()
+    target_path = backend_path(path).resolve()
+    if target_path == model_root or model_root not in target_path.parents:
+        _write_log(target, "model directory cleanup skipped", {"path": str(path), "reason": reason})
+        return
+    try:
+        if target_path.exists():
+            shutil.rmtree(target_path)
+            _write_log(target, "model directory removed", {"path": str(path), "reason": reason})
+    except Exception as exc:
+        _write_log(
+            target,
+            "model directory cleanup failed",
+            {"path": str(path), "reason": reason, "error": str(exc)},
+        )
+
+
 def _make_xgb_candidate(target: str, config: dict, labels: pd.DataFrame):
     adapter = _load_adapter(config)
     op_history = load_operation_history(target)
@@ -230,6 +248,7 @@ def _maybe_promote_existing_candidate(target: str, config: dict, active_metrics:
     registry = load_registry()
     registry[target]["candidate_model_dir"] = None
     save_registry(registry)
+    _remove_model_dir(target, candidate_dir, "candidate_rejected")
     return {
         "status": "candidate_rejected",
         "candidate_metrics": candidate_metrics,
@@ -297,7 +316,7 @@ def promote_candidate(target: str, candidate_dir: str, reason: str):
     if not candidate_path.exists():
         raise BackendError("MODEL_NOT_LOADED", f"candidate missing: {candidate_dir}", status_code=500)
     version = _version_name(target)
-    _archive_active(target, version)
+    archive_dir = _archive_active(target, version)
     _copy_candidate_to_active(candidate_path, target)
     registry = load_registry()
     registry[target]["candidate_model_dir"] = None
@@ -305,6 +324,8 @@ def promote_candidate(target: str, candidate_dir: str, reason: str):
     save_registry(registry)
     clear_model_cache()
     _write_log(target, "candidate promoted", {"candidate_dir": candidate_dir, "reason": reason})
+    _remove_model_dir(target, candidate_path, "promoted_candidate_copied_to_active")
+    _remove_model_dir(target, archive_dir, "old_active_replaced_by_promoted_candidate")
     return {"target": target, "status": "promoted", "candidate_dir": candidate_dir}
 
 
