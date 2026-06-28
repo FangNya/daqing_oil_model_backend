@@ -125,9 +125,36 @@ def confirm_scan(scanner: Scanner, first_record: ScanRecord, scan_timeout: float
     return first_record
 
 
+def persist_confirmed_record(record: ScanRecord):
+    print("确认通过，准备写入：")
+    print(record.raw_text)
+    log_event("scanner_confirmed", raw_text=record.raw_text, normalized_text=record.normalized_text)
+
+    try:
+        result_info = persist_scan_record(record)
+        print("写入成功：", result_info)
+        log_event("scanner_write_success", result=result_info)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print("写入失败：", exc)
+        log_event("scanner_write_failed", level="error", error=str(exc), raw_text=record.raw_text)
+        return False
+
+
 def monitor(scanner: Scanner, settings):
-    first_record = wait_first_qr(scanner, settings.boot_timeout, settings.boot_interval)
-    last = first_record.normalized_text
+    while True:
+        first_record = wait_first_qr(scanner, settings.boot_timeout, settings.boot_interval)
+        confirmed = confirm_scan(
+            scanner,
+            first_record,
+            settings.scan_timeout,
+            settings.scan_interval,
+            settings.confirm_count,
+        )
+        if confirmed:
+            persist_confirmed_record(confirmed)
+            last = confirmed.normalized_text
+            break
 
     print("\n进入定时扫描模式")
     log_event("scanner_monitor_start", normalized_text=last)
@@ -167,18 +194,7 @@ def monitor(scanner: Scanner, settings):
             continue
 
         last = confirmed.normalized_text
-
-        print("确认通过，准备写入：")
-        print(confirmed.raw_text)
-        log_event("scanner_confirmed", raw_text=confirmed.raw_text, normalized_text=confirmed.normalized_text)
-
-        try:
-            result_info = persist_scan_record(confirmed)
-            print("写入成功：", result_info)
-            log_event("scanner_write_success", result=result_info)
-        except Exception as exc:  # noqa: BLE001
-            print("写入失败：", exc)
-            log_event("scanner_write_failed", level="error", error=str(exc), raw_text=confirmed.raw_text)
+        persist_confirmed_record(confirmed)
 
 
 def main():
