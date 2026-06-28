@@ -10,7 +10,7 @@
 # Local helper outputs
 
 # Local environment / cache
-/.env
+
 __pycache__/
 *.pyc
 .DS_Store

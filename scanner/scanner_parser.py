@@ -78,23 +78,15 @@ def sample_time_for_target(record: ScanRecord, target: str):
 
 
 def scan_payloads(record: ScanRecord):
-    sample_times = []
-    for _, time_key, _, _ in TARGET_SPECS:
+    payloads = []
+    for target, time_key, value_key, _ in TARGET_SPECS:
         sample_time = pd.to_datetime(record.fields.get(time_key), errors="coerce")
         if pd.isna(sample_time):
             raise ValueError(f"二维码中没有可用的采样时间: {time_key}")
-        sample_times.append(sample_time)
-
-    first_time = sample_times[0]
-    if any(time != first_time for time in sample_times[1:]):
-        raise ValueError("二维码中的四个采样时间不一致")
-
-    payloads = []
-    for target, time_key, value_key, _ in TARGET_SPECS:
         payloads.append(
             {
                 "target": target,
-                "sample_time": pd.to_datetime(record.fields[time_key], errors="coerce"),
+                "sample_time": sample_time,
                 "value": normalize_lab_value(record.fields[value_key]),
             }
         )

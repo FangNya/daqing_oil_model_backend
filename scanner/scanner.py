@@ -11,10 +11,10 @@ import time
 
 import serial
 
-from scanner_config import load_settings
 from scanner_lab_writer import persist_scan_record
 from scanner_logger import log_event
 from scanner_parser import ScanRecord, parse_scan_text
+from scanner_settings import load_settings
 
 
 class Scanner:
