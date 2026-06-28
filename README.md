@@ -115,3 +115,48 @@ run_daily_check()
 第一版使用文件存储，不处理多进程并发写入。生产多实例部署时应增加文件锁或改为数据库。
 
 冷启动时，如果 OPC 请求里的操作数据时间与当前时间相差超过 `OPC_STALE_THRESHOLD_DAYS`，这些旧操作数据仍会临时参与当前预测，但不会保存到滚动更新数据池；详情记录在 `runtime/logs/prediction_cold_start/<target>.jsonl`。
+
+## 扫码化验值接入
+
+`scanner/` 是独立模块，不混入预测服务。它的职责只有三件事：
+
+1. 通过串口读取二维码。
+2. 连续识别到相同内容后再确认写入。
+3. 将确认后的化验值追加到 `runtime/data/lab/<target>/YYYY-QN.xlsx`。
+
+扫码模块默认读取 `.env` 中的配置：
+
+```text
+SCANNER_PORT=COM3
+SCANNER_BAUD=9600
+SCANNER_BOOT_INTERVAL=3.0
+SCANNER_BOOT_TIMEOUT=2.0
+SCANNER_SCAN_INTERVAL=5.0
+SCANNER_SCAN_TIMEOUT=2.0
+SCANNER_CONFIRM_COUNT=3
+SCANNER_LOG_DIR=runtime/logs/scanner
+```
+
+说明：
+
+- `SCANNER_CONFIRM_COUNT` 表示同一二维码连续命中的次数阈值。
+- 扫码日志写到 `runtime/logs/scanner/scanner.jsonl`。
+- 化验值不写 `.xls`，统一写入 backend 现有的季度 `.xlsx` 历史文件。
+- 写入逻辑复用 `app/services/storage_service.py::append_lab_records()`，按 `sample_time` 去重并保持时间升序。
+
+二维码文本解析要求包含四组字段：
+
+```text
+bx_entry / bx_time
+c5_entry / c5_time
+pr_entry / pr_time
+tp_entry / tp_time
+```
+
+其中四个采样时间必须一致，否则不会写入。
+
+扫码模块入口：
+
+```bash
+/home/icesnls/anaconda3/envs/cwxtf/bin/python -m scanner.scanner
+```
