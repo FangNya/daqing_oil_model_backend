@@ -4,6 +4,10 @@ from app.api.predict_C5 import bp as predict_C5_bp
 from app.api.predict_bingxi import bp as predict_bingxi_bp
 from app.api.predict_gandian import bp as predict_gandian_bp
 from app.api.predict_qiya import bp as predict_qiya_bp
+from app.services.rolling_update_scheduler import (
+    start_rolling_update_scheduler,
+    stop_rolling_update_scheduler,
+)
 
 
 def create_app():
@@ -24,4 +28,8 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    start_rolling_update_scheduler()
+    try:
+        app.run(host="0.0.0.0", port=5000)
+    finally:
+        stop_rolling_update_scheduler()
