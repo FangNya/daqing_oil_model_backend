@@ -153,8 +153,6 @@ pr_entry / pr_time
 tp_entry / tp_time
 ```
 
-其中四个采样时间必须一致，否则不会写入。
-
 扫码模块入口：
 
 ```bash
