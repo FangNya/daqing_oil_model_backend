@@ -9,6 +9,16 @@ from app.services.errors import BackendError
 from app.services.storage_service import load_lab_history, load_prediction_history, save_evaluation_record
 
 
+def to_naive_timestamp(value):
+    ts = pd.to_datetime(value, errors="coerce")
+    if pd.isna(ts):
+        return ts
+    ts = pd.Timestamp(ts)
+    if ts.tzinfo is not None:
+        return ts.tz_convert(None)
+    return ts
+
+
 def metrics_dict(y_true, y_pred):
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
@@ -31,11 +41,13 @@ def matched_active_predictions(target: str, start_time=None, end_time=None):
         return pd.DataFrame(columns=["prediction_time", "prediction", "sample_time", "value"])
 
     if start_time is not None:
-        predictions = predictions[predictions["prediction_time"] >= pd.to_datetime(start_time)]
-        labs = labs[labs["sample_time"] >= pd.to_datetime(start_time)]
+        start_time = to_naive_timestamp(start_time)
+        predictions = predictions[predictions["prediction_time"] >= start_time]
+        labs = labs[labs["sample_time"] >= start_time]
     if end_time is not None:
-        predictions = predictions[predictions["prediction_time"] < pd.to_datetime(end_time)]
-        labs = labs[labs["sample_time"] < pd.to_datetime(end_time)]
+        end_time = to_naive_timestamp(end_time)
+        predictions = predictions[predictions["prediction_time"] < end_time]
+        labs = labs[labs["sample_time"] < end_time]
 
     merged = pd.merge(
         predictions,

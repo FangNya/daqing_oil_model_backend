@@ -14,7 +14,7 @@ from app.feature_adapters.common import backend_path
 from app.models.informer_model import InformerPredictor
 from app.models.xgboost_model import XGBoostPredictor
 from app.services.errors import BackendError
-from app.services.evaluation_service import evaluate_active, metrics_dict
+from app.services.evaluation_service import evaluate_active, metrics_dict, to_naive_timestamp
 from app.services.prediction_service import _load_adapter, clear_model_cache
 from app.services.registry_service import get_target_config, load_registry, save_registry
 from app.services.storage_service import (
@@ -65,7 +65,9 @@ def _labels_in_period(target: str, start_time, end_time):
     labs = load_lab_history(target)
     if labs.empty:
         return pd.DataFrame(columns=["sample_time", "value"])
-    mask = (labs["sample_time"] >= pd.to_datetime(start_time)) & (labs["sample_time"] < pd.to_datetime(end_time))
+    start_time = to_naive_timestamp(start_time)
+    end_time = to_naive_timestamp(end_time)
+    mask = (labs["sample_time"] >= start_time) & (labs["sample_time"] < end_time)
     return labs.loc[mask, ["sample_time", "value"]].sort_values("sample_time")
 
 
@@ -257,7 +259,7 @@ def _maybe_promote_existing_candidate(target: str, config: dict, active_metrics:
 
 
 def maybe_run_target_update(target: str, now=None):
-    now = pd.Timestamp(now or _now())
+    now = to_naive_timestamp(now or _now())
     config = get_target_config(target)
     cycle = config.get("default_cycle", "none")
     days = _cycle_days(cycle)
@@ -269,7 +271,7 @@ def maybe_run_target_update(target: str, now=None):
         return {"target": target, "status": "skipped", "reason": "cycle none"}
 
     last_update = config.get("last_update_time")
-    cycle_start = pd.to_datetime(last_update) if last_update else now - timedelta(days=days)
+    cycle_start = to_naive_timestamp(last_update) if last_update else now - timedelta(days=days)
     if (now - cycle_start).days < days:
         return {"target": target, "status": "not_due", "cycle": cycle}
 
