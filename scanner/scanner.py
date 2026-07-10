@@ -89,12 +89,12 @@ def wait_first_qr(scanner: Scanner, boot_timeout: float, boot_interval: float) -
         time.sleep(boot_interval)
 
 
-def confirm_scan(scanner: Scanner, first_record: ScanRecord, scan_timeout: float, scan_interval: float, confirm_count: int):
+def confirm_scan(scanner: Scanner, first_record: ScanRecord, scan_timeout: float, confirm_interval: float, confirm_count: int):
     current = first_record.normalized_text
     count = 1
 
     while count < confirm_count:
-        time.sleep(scan_interval)
+        time.sleep(confirm_interval)
         result = scanner.scan_once(scan_timeout)
         if not result:
             print("本轮无二维码，确认计数重置")
@@ -148,7 +148,7 @@ def monitor(scanner: Scanner, settings):
             scanner,
             first_record,
             settings.scan_timeout,
-            settings.scan_interval,
+            settings.confirm_interval,
             settings.confirm_count,
         )
         if confirmed:
@@ -187,7 +187,7 @@ def monitor(scanner: Scanner, settings):
             scanner,
             record,
             settings.scan_timeout,
-            settings.scan_interval,
+            settings.confirm_interval,
             settings.confirm_count,
         )
         if not confirmed:

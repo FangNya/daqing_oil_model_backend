@@ -52,6 +52,7 @@ class ScannerSettings:
     boot_timeout: float
     scan_interval: float
     scan_timeout: float
+    confirm_interval: float
     confirm_count: int
     log_dir: Path
 
@@ -66,6 +67,7 @@ def load_settings() -> ScannerSettings:
         boot_timeout=_get_float("SCANNER_BOOT_TIMEOUT", 2.0),
         scan_interval=_get_float("SCANNER_SCAN_INTERVAL", 5.0),
         scan_timeout=_get_float("SCANNER_SCAN_TIMEOUT", 2.0),
+        confirm_interval=_get_float("SCANNER_CONFIRM_INTERVAL", 5.0),
         confirm_count=_get_int("SCANNER_CONFIRM_COUNT", 3),
         log_dir=Path(_get("SCANNER_LOG_DIR", str(RUNTIME_DIR / "logs" / "scanner"))),
     )
