@@ -5,7 +5,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.config import RUNTIME_DIR
-from scanner_settings import load_settings
+
+if __package__:
+    from .scanner_settings import load_settings
+else:
+    from scanner_settings import load_settings
 
 
 def _log_path() -> Path:

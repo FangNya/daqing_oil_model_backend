@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from app.services.storage_service import append_lab_records
-from scanner_parser import scan_payloads
+
+if __package__:
+    from .scanner_parser import scan_payloads
+else:
+    from scanner_parser import scan_payloads
 
 
 def persist_scan_record(record):
