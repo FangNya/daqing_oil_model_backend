@@ -5,7 +5,7 @@ import pandas as pd
 from flask import jsonify, request
 
 from app.services.prediction_service import predict_target
-from app.services.storage_service import load_lab_history, load_prediction_history
+from app.services.storage_service import load_latest_valid_lab, load_latest_valid_prediction
 
 
 logger = logging.getLogger(__name__)
@@ -34,32 +34,20 @@ def _now_text():
 
 def _latest_valid_prediction(target: str):
     try:
-        history = load_prediction_history(target)
+        value = load_latest_valid_prediction(target)
     except Exception as exc:
         logger.warning("load prediction fallback failed for %s: %s", target, exc)
         return None
-    if history.empty or "prediction" not in history.columns:
-        return None
-    for value in reversed(history["prediction"].tolist()):
-        number = _finite_float(value)
-        if number is not None:
-            return number
-    return None
+    return _finite_float(value)
 
 
 def _latest_valid_lab_value(target: str):
     try:
-        history = load_lab_history(target)
+        value = load_latest_valid_lab(target)
     except Exception as exc:
         logger.warning("load lab fallback failed for %s: %s", target, exc)
         return None
-    if history.empty or "value" not in history.columns:
-        return None
-    for value in reversed(history["value"].tolist()):
-        number = _finite_float(value)
-        if number is not None:
-            return number
-    return None
+    return _finite_float(value)
 
 
 def _safe_fallback_value(target: str):

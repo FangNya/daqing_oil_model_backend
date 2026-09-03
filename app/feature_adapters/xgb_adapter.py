@@ -14,6 +14,9 @@ from app.feature_adapters.common import (
 from app.services.errors import BackendError
 
 
+FILTER_WARMUP_HOURS = 7 * 24
+
+
 class XGBFeatureAdapter:
     def __init__(self, target: str, model_dir: str, tau_minutes: float):
         self.target = target
@@ -25,6 +28,8 @@ class XGBFeatureAdapter:
         self.engineered_feature_names = list(self.artifacts["engineered_feature_names"])
         self.feature_scaler = self.artifacts["feature_scaler"]
         self.tau_minutes = tau_minutes
+        # Preserve the recursive low-pass state without loading the full operation history.
+        self.history_warmup_hours = FILTER_WARMUP_HOURS
         best = self.config.get("best_config", {})
         self.delay_hours = int(best.get("delay_hours", 1))
         self.window_hours = int(best.get("window_hours", 1))

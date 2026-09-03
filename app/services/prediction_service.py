@@ -305,8 +305,16 @@ def predict_target(target: str, payload: dict):
     except Exception as exc:
         raise BackendError("DATA_SAVE_FAILED", str(exc), status_code=500) from exc
 
-    lab_history = load_lab_history(target)
     pred_time = _prediction_time(operation_records, lab_records, adapter, payload, len(stale_records))
+    window_start = _operation_window_start(pred_time, adapter)
+    history_start = window_start - pd.Timedelta(hours=getattr(adapter, "history_warmup_hours", 0))
+    window_end = pd.Timestamp(pred_time) - pd.Timedelta(hours=adapter.delay_hours)
+    lab_history = load_lab_history(
+        target,
+        start_time=history_start,
+        end_time=pred_time,
+        include_preceding=True,
+    )
 
     if stale_records:
         return _fallback_to_lab_response(
@@ -324,7 +332,6 @@ def predict_target(target: str, payload: dict):
             threshold_days,
         )
 
-    window_start = _operation_window_start(pred_time, adapter)
     if not _has_prior_lab(lab_history, window_start):
         return _fallback_to_lab_response(
             target,
@@ -341,7 +348,12 @@ def predict_target(target: str, payload: dict):
             threshold_days,
         )
 
-    op_history = load_operation_history(target)
+    op_history = load_operation_history(
+        target,
+        start_time=history_start,
+        end_time=window_end,
+        include_preceding=True,
+    )
     prediction_history = _combine_operation_history(op_history, operation_records)
     try:
         X = adapter.build_predict_input(prediction_history, lab_history, pred_time)
