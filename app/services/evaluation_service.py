@@ -35,8 +35,8 @@ def metrics_dict(y_true, y_pred):
 
 
 def matched_active_predictions(target: str, start_time=None, end_time=None):
-    predictions = load_prediction_history(target)
-    labs = load_lab_history(target)
+    predictions = load_prediction_history(target, start_time=start_time, end_time=end_time)
+    labs = load_lab_history(target, start_time=start_time, end_time=end_time)
     if predictions.empty or labs.empty:
         return pd.DataFrame(columns=["prediction_time", "prediction", "sample_time", "value"])
 

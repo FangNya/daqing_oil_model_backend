@@ -35,6 +35,8 @@ INFORMER_UPDATE_EPOCHS = {
     "gandian": 30,
 }
 
+NONE_EVALUATION_LOOKBACK_DAYS = 30
+
 
 def _cycle_days(cycle: str):
     if cycle == "none":
@@ -62,13 +64,36 @@ def _write_log(target: str, message: str, extra: dict | None = None):
 
 
 def _labels_in_period(target: str, start_time, end_time):
-    labs = load_lab_history(target)
-    if labs.empty:
-        return pd.DataFrame(columns=["sample_time", "value"])
     start_time = to_naive_timestamp(start_time)
     end_time = to_naive_timestamp(end_time)
+    labs = load_lab_history(target, start_time=start_time, end_time=end_time)
+    if labs.empty:
+        return pd.DataFrame(columns=["sample_time", "value"])
     mask = (labs["sample_time"] >= start_time) & (labs["sample_time"] < end_time)
     return labs.loc[mask, ["sample_time", "value"]].sort_values("sample_time")
+
+
+def _load_training_histories(target: str, adapter, labels: pd.DataFrame):
+    label_times = pd.to_datetime(labels["sample_time"], errors="coerce").dropna()
+    if label_times.empty:
+        return pd.DataFrame(columns=["TimeStamp"]), pd.DataFrame(columns=["sample_time", "value"])
+    operation_start = label_times.min() - timedelta(
+        hours=adapter.delay_hours + adapter.window_hours + getattr(adapter, "history_warmup_hours", 0)
+    )
+    operation_end = label_times.max() - timedelta(hours=adapter.delay_hours)
+    operation_history = load_operation_history(
+        target,
+        start_time=operation_start,
+        end_time=operation_end,
+        include_preceding=True,
+    )
+    lab_history = load_lab_history(
+        target,
+        start_time=operation_start,
+        end_time=operation_end,
+        include_preceding=True,
+    )
+    return operation_history, lab_history
 
 
 def _candidate_base_dir(target: str, version: str):
@@ -114,8 +139,7 @@ def _remove_model_dir(target: str, path: str | Path, reason: str):
 
 def _make_xgb_candidate(target: str, config: dict, labels: pd.DataFrame):
     adapter = _load_adapter(config)
-    op_history = load_operation_history(target)
-    lab_history = load_lab_history(target)
+    op_history, lab_history = _load_training_histories(target, adapter, labels)
     X_train, y_train = adapter.build_training_matrix(op_history, lab_history, labels)
     if len(y_train) < MIN_UPDATE_SAMPLES[target]:
         raise BackendError(
@@ -151,8 +175,7 @@ def _make_xgb_candidate(target: str, config: dict, labels: pd.DataFrame):
 
 def _make_informer_candidate(target: str, config: dict, labels: pd.DataFrame):
     adapter = _load_adapter(config)
-    op_history = load_operation_history(target)
-    lab_history = load_lab_history(target)
+    op_history, lab_history = _load_training_histories(target, adapter, labels)
     X_train, y_train = adapter.build_training_matrix(op_history, lab_history, labels)
     if len(y_train) < MIN_UPDATE_SAMPLES[target]:
         raise BackendError(
@@ -203,8 +226,7 @@ def evaluate_model_dir(target: str, model_dir: str, labels: pd.DataFrame):
     candidate_config = dict(config)
     candidate_config["active_model_dir"] = model_dir
     adapter = _load_adapter(candidate_config)
-    op_history = load_operation_history(target)
-    lab_history = load_lab_history(target)
+    op_history, lab_history = _load_training_histories(target, adapter, labels)
     X, y_true = adapter.build_training_matrix(op_history, lab_history, labels)
     if len(y_true) < MIN_UPDATE_SAMPLES[target]:
         raise BackendError(
@@ -265,7 +287,12 @@ def maybe_run_target_update(target: str, now=None):
     days = _cycle_days(cycle)
     if days is None:
         try:
-            evaluate_active(target, cycle)
+            evaluate_active(
+                target,
+                cycle,
+                now - timedelta(days=NONE_EVALUATION_LOOKBACK_DAYS),
+                now,
+            )
         except BackendError as exc:
             _write_log(target, "evaluation skipped", {"reason": exc.message})
         return {"target": target, "status": "skipped", "reason": "cycle none"}
