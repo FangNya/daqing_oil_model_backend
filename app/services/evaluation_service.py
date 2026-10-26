@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from inspect import Parameter, signature
 
 import numpy as np
 import pandas as pd
 
 from app.services.errors import BackendError
 from app.services.storage_service import load_lab_history, load_prediction_history, save_evaluation_record
+
+
+PREDICTION_MATCH_TOLERANCE = pd.Timedelta(minutes=2)
 
 
 def to_naive_timestamp(value):
@@ -34,29 +38,53 @@ def metrics_dict(y_true, y_pred):
     return {"samples": int(len(y_true)), "mae": mae, "rmse": rmse, "r2": r2}
 
 
+def _load_history(loader, target: str, start_time, end_time):
+    # Older deployments do not accept bounds; keep this a single-file hotfix.
+    parameters = signature(loader).parameters
+    if {"start_time", "end_time"}.issubset(parameters) or any(
+        parameter.kind == Parameter.VAR_KEYWORD for parameter in parameters.values()
+    ):
+        return loader(target, start_time=start_time, end_time=end_time)
+    return loader(target)
+
+
 def matched_active_predictions(target: str, start_time=None, end_time=None):
-    predictions = load_prediction_history(target, start_time=start_time, end_time=end_time)
-    labs = load_lab_history(target, start_time=start_time, end_time=end_time)
+    start_time = to_naive_timestamp(start_time) if start_time is not None else None
+    end_time = to_naive_timestamp(end_time) if end_time is not None else None
+    prediction_start = start_time - PREDICTION_MATCH_TOLERANCE if start_time is not None else None
+    prediction_end = end_time + PREDICTION_MATCH_TOLERANCE if end_time is not None else None
+    predictions = _load_history(load_prediction_history, target, prediction_start, prediction_end)
+    labs = _load_history(load_lab_history, target, start_time, end_time)
     if predictions.empty or labs.empty:
         return pd.DataFrame(columns=["prediction_time", "prediction", "sample_time", "value"])
 
+    # The evaluation period belongs to the lab sample, not its nearby prediction.
     if start_time is not None:
-        start_time = to_naive_timestamp(start_time)
-        predictions = predictions[predictions["prediction_time"] >= start_time]
         labs = labs[labs["sample_time"] >= start_time]
     if end_time is not None:
-        end_time = to_naive_timestamp(end_time)
-        predictions = predictions[predictions["prediction_time"] < end_time]
         labs = labs[labs["sample_time"] < end_time]
+    if labs.empty:
+        return pd.DataFrame(columns=["prediction_time", "prediction", "sample_time", "value"])
 
-    merged = pd.merge(
-        predictions,
+    predictions = predictions.copy()
+    if "created_at" in predictions.columns:
+        predictions["_match_created_at"] = pd.to_datetime(predictions["created_at"], errors="coerce", utc=True)
+        predictions = predictions.sort_values("_match_created_at", kind="mergesort", na_position="first")
+        predictions = predictions.drop(columns=["_match_created_at"])
+    predictions = predictions.drop_duplicates("prediction_time", keep="last").sort_values("prediction_time")
+    labs = labs.drop_duplicates("sample_time", keep="last").sort_values("sample_time")
+
+    # One nearest prediction per lab, inclusive of the two-minute tolerance.
+    # merge_asof chooses the earlier prediction when distances are equal.
+    merged = pd.merge_asof(
         labs,
-        left_on="prediction_time",
-        right_on="sample_time",
-        how="inner",
+        predictions,
+        left_on="sample_time",
+        right_on="prediction_time",
+        direction="nearest",
+        tolerance=PREDICTION_MATCH_TOLERANCE,
     )
-    return merged.sort_values("prediction_time")
+    return merged.dropna(subset=["prediction_time", "prediction"]).sort_values("prediction_time")
 
 
 def evaluate_active(target: str, cycle: str, start_time=None, end_time=None):

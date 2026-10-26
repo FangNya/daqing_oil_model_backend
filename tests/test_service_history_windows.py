@@ -176,10 +176,15 @@ class EvaluationHistoryWindowTests(unittest.TestCase):
         ):
             result = evaluation_service.matched_active_predictions("demo", start, end)
 
-        load_predictions.assert_called_once_with("demo", start_time=start, end_time=end)
+        load_predictions.assert_called_once_with(
+            "demo",
+            start_time=start - evaluation_service.PREDICTION_MATCH_TOLERANCE,
+            end_time=end + evaluation_service.PREDICTION_MATCH_TOLERANCE,
+        )
         load_labs.assert_called_once_with("demo", start_time=start, end_time=end)
         self.assertEqual(result["prediction_time"].tolist(), [start])
 
 
 if __name__ == "__main__":
     unittest.main()
+
